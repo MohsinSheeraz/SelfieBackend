@@ -15,9 +15,9 @@ dotenv.config();
 const app = express();
 
 // Define allowed origins
-const allowedOrigins = [process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app/'];
+const allowedOrigins = [process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app'];
 
-// Enable CORS with specific origin
+// Enable CORS with specific origin (including preflight response)
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
@@ -29,7 +29,9 @@ app.use(cors({
         return callback(null, true);
     },
     methods: ['GET', 'POST'], // Allow specific methods
-    allowedHeaders: ['Content-Type', 'Authorization'] // Specify headers if needed
+    allowedHeaders: ['Content-Type', 'Authorization'], // Specify headers if needed
+    preflightContinue: false, // Vercel often requires this
+    optionsSuccessStatus: 204 // Success response for preflight requests
 }));
 
 // Cloudinary configuration
@@ -148,41 +150,6 @@ app.post('/uploadSwap', upload.single('swapImage'), async (req, res) => {
     }
 });
 
-// Endpoint 3: Upload result image from URL to Cloudinary
-app.post('/uploadResult', express.json(), async (req, res) => {
-    try {
-        const { resultUrl } = req.body;
-
-        if (!resultUrl) {
-            return res.status(400).json({ message: 'Result URL must be provided.' });
-        }
-
-        // Fetch the image from the resultUrl
-        const response = await fetch(resultUrl);
-        if (!response.ok) {
-            return res.status(400).json({ message: 'Failed to fetch image from resultUrl.' });
-        }
-
-        const buffer = await response.buffer();
-
-        // Generate unique public ID using UUID
-        const resultPublicId = `result_images/${uuidv4()}`;
-
-        // Upload the fetched image to Cloudinary
-        const resultUpload = await uploadToCloudinary(buffer, 'result_images', path.parse(resultPublicId).name);
-        const resultImageUrl = resultUpload.secure_url;
-
-        // Return the new Cloudinary URL
-        return res.status(200).json({
-            message: 'Result image uploaded successfully!',
-            resultImageUrl
-        });
-    } catch (error) {
-        console.error('Error uploading result image to Cloudinary:', error);
-        return res.status(500).json({ message: 'Error uploading result image to Cloudinary.' });
-    }
-});
-
 // Serve static files (e.g., HTML page)
 app.use(express.static('public'));
 
@@ -193,7 +160,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start the server
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;  // Use Vercel's port
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
