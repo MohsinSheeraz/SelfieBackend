@@ -17,22 +17,26 @@ const app = express();
 // Define allowed origins
 const allowedOrigins = [process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app'];
 
+
+app.user(cors());
+
+
 // Enable CORS with specific origin (including preflight response)
-app.use(cors({
-    origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps or curl requests)
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
-            return callback(new Error(msg), false);
-        }
-        return callback(null, true);
-    },
-    methods: ['GET', 'POST'], // Allow specific methods
-    allowedHeaders: ['Content-Type', 'Authorization'], // Specify headers if needed
-    preflightContinue: false, // Vercel often requires this
-    optionsSuccessStatus: 204 // Success response for preflight requests
-}));
+// app.use(cors({
+//     origin: function (origin, callback) {
+//         // Allow requests with no origin (like mobile apps or curl requests)
+//         if (!origin) return callback(null, true);
+//         if (allowedOrigins.indexOf(origin) === -1) {
+//             const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}`;
+//             return callback(new Error(msg), false);
+//         }
+//         return callback(null, true);
+//     },
+//     methods: ['GET', 'POST'], // Allow specific methods
+//     allowedHeaders: ['Content-Type', 'Authorization'], // Specify headers if needed
+//     preflightContinue: false, // Vercel often requires this
+//     optionsSuccessStatus: 204 // Success response for preflight requests
+// }));
 
 // Cloudinary configuration
 cloudinary.config({
