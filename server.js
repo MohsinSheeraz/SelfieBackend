@@ -16,8 +16,12 @@ dotenv.config();
 // Initialize express app
 const app = express();
 
+
 // Enable CORS with specific origin (replace with your frontend URL)
 const allowedOrigins = [process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app/'];
+
+
+app.use(cors());
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
