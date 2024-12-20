@@ -9,7 +9,6 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fetch from 'node-fetch'; // Ensure node-fetch is installed
 import sharp from 'sharp';
-import axios from 'axios';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -88,7 +87,45 @@ const upload = multer({
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB
 });
 
-// Endpoint 1: Upload only swapImage
+// Endpoint 1: Upload both targetImage and swapImage
+app.post('/upload', upload.fields([
+    { name: 'targetImage', maxCount: 1 },
+    { name: 'swapImage', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        // Check if both files are uploaded
+        if (!req.files || !req.files['targetImage'] || !req.files['swapImage']) {
+            return res.status(400).json({ message: 'Both target image and swap image must be uploaded.' });
+        }
+
+        const targetImageFile = req.files['targetImage'][0];
+        const swapImageFile = req.files['swapImage'][0];
+
+        // Generate unique public IDs using UUIDs
+        const targetPublicId = `target_images/${uuidv4()}`;
+        const swapPublicId = `swap_images/${uuidv4()}`;
+
+        // Upload target image to Cloudinary
+        const targetResult = await uploadToCloudinary(targetImageFile.buffer, 'target_images', path.parse(targetPublicId).name);
+        const targetImageUrl = targetResult.secure_url;
+
+        // Upload swap image to Cloudinary
+        const swapResult = await uploadToCloudinary(swapImageFile.buffer, 'swap_images', path.parse(swapPublicId).name);
+        const swapImageUrl = swapResult.secure_url;
+
+        // Return both image URLs
+        return res.status(200).json({
+            message: 'Images uploaded successfully!',
+            targetImageUrl,
+            swapImageUrl
+        });
+    } catch (error) {
+        console.error('Error uploading images to Cloudinary:', error);
+        return res.status(500).json({ message: 'Error uploading images to Cloudinary.' });
+    }
+});
+
+// Endpoint 2: Upload only swapImage
 app.post('/uploadSwap', upload.single('swapImage'), async (req, res) => {
     try {
         // Check if swapImage is uploaded
@@ -116,7 +153,7 @@ app.post('/uploadSwap', upload.single('swapImage'), async (req, res) => {
     }
 });
 
-// Endpoint 2: Upload result image from URL to Cloudinary
+// Endpoint 3: Upload result image from URL to Cloudinary
 app.post('/uploadResult', async (req, res) => {
     try {
         const { resultUrl } = req.body;
@@ -151,116 +188,85 @@ app.post('/uploadResult', async (req, res) => {
     }
 });
 
-// Endpoint 3: Generate mockups using Printful's API
+// Endpoint 4: Generate mockups by overlaying swapped image onto product images
 app.post('/generateMockups', async (req, res) => {
     try {
-        const { resultImageUrl, products } = req.body; // products: array of product types with base image URLs
+        const { resultImageUrl, products } = req.body; // products is an array of product types with base image URLs
 
         if (!resultImageUrl || !products || !Array.isArray(products)) {
             return res.status(400).json({ message: 'resultImageUrl and products array must be provided.' });
         }
 
-        const mockupPromises = products.map(async (product) => {
+        // Define overlay positions and sizes based on product name
+        const overlayConfig = {
+            "T-Shirt": { x: 100, y: 150, width: 300, height: 300 },
+            "Mug": { x: 50, y: 50, width: 200, height: 200 },
+            "Phone Case": { x: 80, y: 100, width: 240, height: 240 },
+            "Poster": { x: 150, y: 200, width: 500, height: 500 },
+            "Hoodie": { x: 100, y: 150, width: 300, height: 300 },
+            "Tote Bag": { x: 80, y: 100, width: 240, height: 240 },
+            // Add more product types as needed
+        };
+
+        // Fetch the swapped image buffer
+        const swappedImageResponse = await fetch(resultImageUrl);
+        if (!swappedImageResponse.ok) {
+            return res.status(400).json({ message: 'Failed to fetch swapped image.' });
+        }
+        const swappedImageBuffer = await swappedImageResponse.buffer();
+
+        // Initialize an array to hold mockup URLs
+        const mockupUrls = [];
+
+        for (const product of products) {
             const { id, name, baseImageUrl } = product;
 
-            // Map your product names to Printful's product variants
-            // You need to ensure that the product names match Printful's naming conventions
-            // For example, "T-Shirt" might correspond to "tshirt" in Printful
-
-            // Example mapping (adjust based on Printful's catalog)
-            const printfulProductVariant = {
-                "T-Shirt": {
-                    variant_id: 4011, // Example variant ID for T-Shirt
-                },
-                "Mug": {
-                    variant_id: 3011, // Example variant ID for Mug
-                },
-                // Add mappings for other products
-            }[name];
-
-            if (!printfulProductVariant) {
-                console.error(`No Printful variant mapping defined for product ${name}`);
-                return null;
+            // Get overlay config for the product
+            const config = overlayConfig[name];
+            if (!config) {
+                console.error(`No overlay config defined for product ${name}`);
+                continue; // Skip this product
             }
 
-            // Prepare the mockup request
-            const mockupData = {
-                variant_id: printfulProductVariant.variant_id,
-                format: "png",
-                image_url: resultImageUrl,
-                position: {
-                    area_width: 300, // Adjust based on product
-                    area_height: 300,
-                    area_left: 100,
-                    area_top: 150,
-                },
-            };
+            const { x, y, width, height } = config;
 
-            try {
-                const response = await axios.post(
-                    'https://api.printful.com/mockup-generator/create-task',
-                    mockupData,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-                            'Content-Type': 'application/json',
-                        },
-                    }
-                );
-
-                const taskId = response.data.result.task.id;
-
-                // Polling for task completion (or implement webhooks)
-                let mockupImageUrl = null;
-                let attempts = 0;
-                const maxAttempts = 10;
-                const delay = 2000; // 2 seconds
-
-                while (attempts < maxAttempts && !mockupImageUrl) {
-                    await new Promise(resolve => setTimeout(resolve, delay));
-
-                    const taskStatusResponse = await axios.get(
-                        `https://api.printful.com/mockup-generator/task/${taskId}`,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-                            },
-                        }
-                    );
-
-                const taskStatus = taskStatusResponse.data.result.task.status;
-
-                if (taskStatus === 'success') {
-                    mockupImageUrl = taskStatusResponse.data.result.task.result_url;
-                } else if (taskStatus === 'error') {
-                    throw new Error(`Mockup generation failed for product ${name}`);
-                }
-
-                attempts += 1;
-                }
-
-                if (!mockupImageUrl) {
-                    throw new Error(`Mockup generation timed out for product ${name}`);
-                }
-
-                return {
-                    productId: id,
-                    productName: name,
-                    mockupImageUrl,
-                };
-
-            } catch (error) {
-                console.error(`Error generating mockup for product ${name}:`, error.message);
-                return null;
+            // Fetch the base product image
+            const baseImageResponse = await fetch(baseImageUrl);
+            if (!baseImageResponse.ok) {
+                console.error(`Failed to fetch base image for product ${name}`);
+                continue; // Skip this product
             }
-        });
+            const baseImageBuffer = await baseImageResponse.buffer();
 
-        const mockupResults = await Promise.all(mockupPromises);
-        const successfulMockups = mockupResults.filter(mockup => mockup !== null);
+            // Resize the swapped image to fit the overlay size
+            const resizedSwappedImage = await sharp(swappedImageBuffer)
+                .resize(width, height)
+                .toBuffer();
+
+            // Composite the swapped image onto the base image
+            const compositeImage = await sharp(baseImageBuffer)
+                .composite([{
+                    input: resizedSwappedImage,
+                    top: y,
+                    left: x
+                }])
+                .toBuffer();
+
+            // Upload the composite image to Cloudinary
+            const mockupPublicId = `mockups/${uuidv4()}`;
+            const uploadResult = await uploadToCloudinary(compositeImage, 'mockups', path.parse(mockupPublicId).name);
+
+            const mockupImageUrl = uploadResult.secure_url;
+            mockupUrls.push({
+                productId: id,
+                productName: name,
+                mockupImageUrl
+            });
+        }
 
         return res.status(200).json({
             message: 'Mockups generated successfully!',
-            mockupUrls: successfulMockups,
+            mockupUrls
         });
 
     } catch (error) {
