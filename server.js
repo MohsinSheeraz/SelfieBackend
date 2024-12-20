@@ -1,3 +1,5 @@
+// server.js
+
 import express from 'express';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
@@ -5,8 +7,8 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
-import { promisify } from 'util';
-import fetch from 'node-fetch'; // Install node-fetch: npm install node-fetch@2
+import fetch from 'node-fetch'; // Ensure node-fetch is installed
+import sharp from 'sharp';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -32,6 +34,9 @@ app.use(cors({
     optionsSuccessStatus: 204
 }));
 
+// Middleware to parse JSON bodies
+app.use(express.json());
+
 // Cloudinary configuration
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -48,7 +53,7 @@ const uploadToCloudinary = (fileBuffer, folder, publicId) => {
                 public_id: publicId,
                 resource_type: 'image',
                 overwrite: true,
-                format: 'jpg' // You can adjust the format as needed
+                format: 'jpg' // Adjust format as needed
             },
             (error, result) => {
                 if (error) {
@@ -149,7 +154,7 @@ app.post('/uploadSwap', upload.single('swapImage'), async (req, res) => {
 });
 
 // Endpoint 3: Upload result image from URL to Cloudinary
-app.post('/uploadResult', express.json(), async (req, res) => {
+app.post('/uploadResult', async (req, res) => {
     try {
         const { resultUrl } = req.body;
 
@@ -183,6 +188,93 @@ app.post('/uploadResult', express.json(), async (req, res) => {
     }
 });
 
+// Endpoint 4: Generate mockups by overlaying swapped image onto product images
+app.post('/generateMockups', async (req, res) => {
+    try {
+        const { resultImageUrl, products } = req.body; // products is an array of product types with base image URLs
+
+        if (!resultImageUrl || !products || !Array.isArray(products)) {
+            return res.status(400).json({ message: 'resultImageUrl and products array must be provided.' });
+        }
+
+        // Define overlay positions and sizes based on product name
+        const overlayConfig = {
+            "T-Shirt": { x: 100, y: 150, width: 300, height: 300 },
+            "Mug": { x: 50, y: 50, width: 200, height: 200 },
+            "Phone Case": { x: 80, y: 100, width: 240, height: 240 },
+            "Poster": { x: 150, y: 200, width: 500, height: 500 },
+            "Hoodie": { x: 100, y: 150, width: 300, height: 300 },
+            "Tote Bag": { x: 80, y: 100, width: 240, height: 240 },
+            // Add more product types as needed
+        };
+
+        // Fetch the swapped image buffer
+        const swappedImageResponse = await fetch(resultImageUrl);
+        if (!swappedImageResponse.ok) {
+            return res.status(400).json({ message: 'Failed to fetch swapped image.' });
+        }
+        const swappedImageBuffer = await swappedImageResponse.buffer();
+
+        // Initialize an array to hold mockup URLs
+        const mockupUrls = [];
+
+        for (const product of products) {
+            const { id, name, baseImageUrl } = product;
+
+            // Get overlay config for the product
+            const config = overlayConfig[name];
+            if (!config) {
+                console.error(`No overlay config defined for product ${name}`);
+                continue; // Skip this product
+            }
+
+            const { x, y, width, height } = config;
+
+            // Fetch the base product image
+            const baseImageResponse = await fetch(baseImageUrl);
+            if (!baseImageResponse.ok) {
+                console.error(`Failed to fetch base image for product ${name}`);
+                continue; // Skip this product
+            }
+            const baseImageBuffer = await baseImageResponse.buffer();
+
+            // Resize the swapped image to fit the overlay size
+            const resizedSwappedImage = await sharp(swappedImageBuffer)
+                .resize(width, height)
+                .toBuffer();
+
+            // Composite the swapped image onto the base image
+            const compositeImage = await sharp(baseImageBuffer)
+                .composite([{
+                    input: resizedSwappedImage,
+                    top: y,
+                    left: x
+                }])
+                .toBuffer();
+
+            // Upload the composite image to Cloudinary
+            const mockupPublicId = `mockups/${uuidv4()}`;
+            const uploadResult = await uploadToCloudinary(compositeImage, 'mockups', path.parse(mockupPublicId).name);
+
+            const mockupImageUrl = uploadResult.secure_url;
+            mockupUrls.push({
+                productId: id,
+                productName: name,
+                mockupImageUrl
+            });
+        }
+
+        return res.status(200).json({
+            message: 'Mockups generated successfully!',
+            mockupUrls
+        });
+
+    } catch (error) {
+        console.error('Error generating mockups:', error);
+        return res.status(500).json({ message: 'Error generating mockups.' });
+    }
+});
+
 // Serve static files (e.g., HTML page)
 app.use(express.static('public'));
 
@@ -192,9 +284,8 @@ app.use((err, req, res, next) => {
     res.status(500).json({ message: 'An unexpected error occurred.' });
 });
 
-// Start the server on a dynamic port
+// Start the server
 const PORT = process.env.PORT || 5000;
-
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 });
