@@ -1,5 +1,3 @@
-// server.js
-
 import express from 'express';
 import multer from 'multer';
 import { v2 as cloudinary } from 'cloudinary';
@@ -16,12 +14,10 @@ dotenv.config();
 // Initialize express app
 const app = express();
 
-
-// Enable CORS with specific origin (replace with your frontend URL)
+// Define allowed origins
 const allowedOrigins = [process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app/'];
 
-
-app.use(cors());
+// Enable CORS with specific origin
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
@@ -31,7 +27,9 @@ app.use(cors({
             return callback(new Error(msg), false);
         }
         return callback(null, true);
-    }
+    },
+    methods: ['GET', 'POST'], // Allow specific methods
+    allowedHeaders: ['Content-Type', 'Authorization'] // Specify headers if needed
 }));
 
 // Cloudinary configuration
