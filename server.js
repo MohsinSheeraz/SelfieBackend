@@ -9,15 +9,24 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fetch from 'node-fetch'; // Ensure node-fetch is installed
 import sharp from 'sharp';
+import Stripe from 'stripe';
 
 // Load environment variables from .env file
 dotenv.config();
+
+// Initialize Stripe
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: '2022-11-15',
+});
 
 // Initialize express app
 const app = express();
 
 // Enable CORS with specific origin
-const allowedOrigins = ['http://localhost:3000', process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app'];
+const allowedOrigins = [
+    'http://localhost:3000',
+    process.env.FRONTEND_URL || 'https://selfie-swap.vercel.app'
+];
 app.use(cors({
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
@@ -121,7 +130,7 @@ app.post('/upload', upload.fields([
         });
     } catch (error) {
         console.error('Error uploading images to Cloudinary:', error);
-        return res.status(500).json({ message: 'Error uploading images to Cloudinary.' });
+        return res.status(500).json({ message: 'Error uploading images to Cloudinary.', error: error.message });
     }
 });
 
@@ -149,7 +158,7 @@ app.post('/uploadSwap', upload.single('swapImage'), async (req, res) => {
         });
     } catch (error) {
         console.error('Error uploading swap image to Cloudinary:', error);
-        return res.status(500).json({ message: 'Error uploading swap image to Cloudinary.' });
+        return res.status(500).json({ message: 'Error uploading swap image to Cloudinary.', error: error.message });
     }
 });
 
@@ -184,7 +193,7 @@ app.post('/uploadResult', async (req, res) => {
         });
     } catch (error) {
         console.error('Error uploading result image to Cloudinary:', error);
-        return res.status(500).json({ message: 'Error uploading result image to Cloudinary.' });
+        return res.status(500).json({ message: 'Error uploading result image to Cloudinary.', error: error.message });
     }
 });
 
@@ -271,7 +280,125 @@ app.post('/generateMockups', async (req, res) => {
 
     } catch (error) {
         console.error('Error generating mockups:', error);
-        return res.status(500).json({ message: 'Error generating mockups.' });
+        return res.status(500).json({ message: 'Error generating mockups.', error: error.message });
+    }
+});
+
+// Endpoint 5: Fetch Printful products
+app.get('/fetchPrintfulProducts', async (req, res) => {
+    try {
+        console.log("Received GET request to /fetchPrintfulProducts");
+        const response = await fetch('https://api.printful.com/products', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            console.log('Error fetching Printful products:', response.statusText);
+            return res.status(response.status).json({ message: 'Error fetching Printful products.' });
+        }
+
+        const data = await response.json();
+        const products = data.result;
+
+        // Select 5-6 products, e.g., the first 6
+        const selectedProducts = products.slice(0, 6).map(product => ({
+            id: product.id,
+            name: product.title,
+            image: product.image // assuming image URL is in product.image
+        }));
+
+        console.log("Selected Printful products:", selectedProducts);
+
+        return res.status(200).json({
+            message: 'Printful products fetched successfully!',
+            products: selectedProducts
+        });
+    } catch (error) {
+        console.error('Error in /fetchPrintfulProducts:', error);
+        return res.status(500).json({ message: 'Internal server error.', error: error.message });
+    }
+});
+
+// Endpoint 6: Create a Stripe Checkout Session
+app.post('/create-checkout-session', async (req, res) => {
+    try {
+        const { cartItems } = req.body;
+
+        if (!cartItems || !Array.isArray(cartItems)) {
+            return res.status(400).json({ message: 'Cart items must be provided.' });
+        }
+
+        // Validate cart items
+        const validatedItems = cartItems.filter(item =>
+            item.id && item.name && item.image && item.price && item.quantity
+        );
+
+        if (validatedItems.length === 0) {
+            return res.status(400).json({ message: 'No valid cart items provided.' });
+        }
+
+        // Further validation: ensure types and positive quantities
+        const isValid = validatedItems.every(item =>
+            typeof item.id === 'number' &&
+            typeof item.name === 'string' &&
+            typeof item.image === 'string' &&
+            typeof item.price === 'number' &&
+            typeof item.quantity === 'number' &&
+            item.quantity > 0
+        );
+
+        if (!isValid) {
+            return res.status(400).json({ message: 'Invalid cart item data.' });
+        }
+
+        // Map cart items to Stripe line items
+        const lineItems = validatedItems.map(item => ({
+            price_data: {
+                currency: 'usd',
+                product_data: {
+                    name: item.name,
+                    images: [item.image],
+                },
+                unit_amount: Math.round(item.price * 100), // Stripe expects amount in cents
+            },
+            quantity: item.quantity,
+        }));
+
+        // Create Stripe checkout session
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: lineItems,
+            mode: 'payment',
+            success_url: `${process.env.FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.FRONTEND_URL}/checkout`,
+        });
+
+        res.json({ url: session.url });
+    } catch (error) {
+        console.error('Error creating Stripe Checkout Session:', error);
+        res.status(500).json({ message: 'Internal server error.', error: error.message });
+    }
+});
+
+// Endpoint 7: Retrieve Stripe Checkout Session
+app.get('/checkout-session', async (req, res) => {
+    try {
+        const { session_id } = req.query;
+
+        if (!session_id) {
+            return res.status(400).json({ message: 'Session ID is required.' });
+        }
+
+        const session = await stripe.checkout.sessions.retrieve(session_id.toString());
+
+        res.json(session);
+    } catch (error) {
+        console.error('Error retrieving Stripe Checkout Session:', error);
+        res.status(500).json({ message: 'Internal server error.', error: error.message });
     }
 });
 
@@ -281,7 +408,7 @@ app.use(express.static('public'));
 // Global error handler
 app.use((err, req, res, next) => {
     console.error('Unhandled Error:', err);
-    res.status(500).json({ message: 'An unexpected error occurred.' });
+    res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
 });
 
 // Start the server

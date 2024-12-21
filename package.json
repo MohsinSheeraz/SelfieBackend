@@ -10,7 +10,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "��#\u0000 \u0000s\u0000e\u0000l\u0000f\u0000i\u0000e\u0000B\u0000A\u0000C\u0000K\u0000\r\u0000 \u0000#\u0000 \u0000S\u0000e\u0000l\u0000f\u0000i\u0000e\u0000B\u0000a\u0000c\u0000k\u0000e\u0000n\u0000d\u0000\r\u0000 \u0000",
   "dependencies": {
     "axios": "^1.7.9",
     "cloudinary": "^2.5.1",
@@ -21,6 +21,7 @@
     "node-fetch": "^2.7.0",
     "nodemon": "^3.1.9",
     "sharp": "^0.33.5",
+    "stripe": "^17.5.0",
     "uuid": "^11.0.3"
   },
   "devDependencies": {
